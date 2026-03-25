@@ -31,9 +31,14 @@ const THEME = {
   brightWhite: "#a6adc8",
 };
 
-export default function TerminalView() {
+interface Props {
+  rawMode?: boolean;
+}
+
+export default function TerminalView({ rawMode = false }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
+  const dataListenerRef = useRef<{ dispose: () => void } | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -103,6 +108,38 @@ export default function TerminalView() {
       terminal.dispose();
     };
   }, []);
+
+  // Toggle stdin and keyboard forwarding based on rawMode
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+
+    if (rawMode) {
+      terminal.options.disableStdin = false;
+      terminal.options.cursorBlink = true;
+      terminal.focus();
+
+      const listener = terminal.onData((data: string) => {
+        invoke("send_input", { input: data }).catch(console.error);
+      });
+      dataListenerRef.current = listener;
+    } else {
+      terminal.options.disableStdin = true;
+      terminal.options.cursorBlink = false;
+
+      if (dataListenerRef.current) {
+        dataListenerRef.current.dispose();
+        dataListenerRef.current = null;
+      }
+    }
+
+    return () => {
+      if (dataListenerRef.current) {
+        dataListenerRef.current.dispose();
+        dataListenerRef.current = null;
+      }
+    };
+  }, [rawMode]);
 
   return <div ref={containerRef} className="terminal-view" />;
 }

@@ -24,17 +24,24 @@ export function useTranscript(): TranscriptState {
       setShellState(event.payload);
 
       if (event.payload.type === "CommandRunning") {
-        const id = nextId.current++;
-        setEntries((prev) => [
-          ...prev,
-          {
-            id,
-            command: event.payload.command,
-            exitCode: null,
-            startTime: Date.now(),
-            endTime: null,
-          },
-        ]);
+        const command = event.payload.command;
+        setEntries((prev) => {
+          const last = prev[prev.length - 1];
+          if (last && last.exitCode === null && last.command === command) {
+            return prev;
+          }
+          const id = nextId.current++;
+          return [
+            ...prev,
+            {
+              id,
+              command,
+              exitCode: null,
+              startTime: Date.now(),
+              endTime: null,
+            },
+          ];
+        });
       }
     });
 

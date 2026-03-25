@@ -34,6 +34,16 @@ function formatState(state: PtyState): { label: string; cls: string } {
       return { label: `Sending: ${state.command}`, cls: "status-running" };
     case "CommandRunning":
       return { label: `Running: ${state.command}`, cls: "status-running" };
+    case "InputExpected":
+      return {
+        label: state.echo_enabled ? "Waiting for input" : "Password required",
+        cls: "status-input",
+      };
+    case "RawMode":
+      return {
+        label: state.process_name,
+        cls: state.is_editor ? "status-editor" : "status-raw",
+      };
     case "Exited":
       return { label: "Exited", cls: "status-exited" };
   }

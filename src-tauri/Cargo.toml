@@ -21,4 +21,5 @@ portable-pty = "0.9"
 vte = "0.13"
 nix = { version = "0.29", features = ["signal", "process", "term"] }
 libproc = "0.14"
+tokio = { version = "1", features = ["time"] }
 anyhow = "1"

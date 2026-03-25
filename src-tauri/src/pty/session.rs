@@ -9,6 +9,8 @@ pub struct PtySession {
     master: Box<dyn MasterPty + Send>,
     writer: Mutex<Box<dyn Write + Send>>,
     _integration: Option<ShellIntegration>,
+    shell_pid: u32,
+    raw_fd: Option<i32>,
 }
 
 pub type PtyReader = Box<dyn Read + Send>;
@@ -54,9 +56,10 @@ impl PtySession {
         }
 
         let child = pair.slave.spawn_command(cmd)?;
-        // Intentionally drop the child handle -- we detect exit via the reader returning EOF.
+        let shell_pid = child.process_id().unwrap_or(0);
         drop(child);
 
+        let raw_fd = pair.master.as_raw_fd();
         let reader = pair.master.try_clone_reader()?;
         let writer = pair.master.take_writer()?;
 
@@ -65,9 +68,19 @@ impl PtySession {
                 master: pair.master,
                 writer: Mutex::new(writer),
                 _integration: integration,
+                shell_pid,
+                raw_fd,
             },
             reader,
         ))
+    }
+
+    pub fn shell_pid(&self) -> u32 {
+        self.shell_pid
+    }
+
+    pub fn raw_fd(&self) -> Option<i32> {
+        self.raw_fd
     }
 
     pub fn write_all(&self, data: &[u8]) -> Result<()> {
@@ -93,7 +106,7 @@ impl PtySession {
 
     #[allow(dead_code)]
     pub fn get_termios(&self) -> Option<nix::sys::termios::Termios> {
-        if let Some(fd) = self.master.as_raw_fd() {
+        if let Some(fd) = self.raw_fd {
             use std::os::fd::BorrowedFd;
             let borrowed = unsafe { BorrowedFd::borrow_raw(fd) };
             nix::sys::termios::tcgetattr(borrowed).ok()
@@ -102,8 +115,17 @@ impl PtySession {
         }
     }
 
-    #[allow(dead_code)]
     pub fn foreground_pid(&self) -> Option<u32> {
         self.master.process_group_leader().map(|p| p as u32)
+    }
+
+    pub fn signal_foreground(&self, signal: nix::sys::signal::Signal) -> Result<()> {
+        if let Some(pid) = self.foreground_pid() {
+            nix::sys::signal::killpg(
+                nix::unistd::Pid::from_raw(pid as i32),
+                signal,
+            )?;
+        }
+        Ok(())
     }
 }

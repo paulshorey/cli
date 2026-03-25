@@ -4,6 +4,7 @@ import {
   useCallback,
   forwardRef,
   useImperativeHandle,
+  useState,
 } from "react";
 import {
   EditorView,
@@ -13,10 +14,13 @@ import {
 } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import type { PtyState } from "../types/pty";
 
 interface Props {
   onSubmit: (text: string) => void;
+  onInputSubmit: (text: string) => void;
   history: string[];
+  shellState: PtyState;
 }
 
 export interface CommandEditorHandle {
@@ -65,19 +69,37 @@ const editorTheme = EditorView.theme({
 });
 
 const CommandEditor = forwardRef<CommandEditorHandle, Props>(
-  ({ onSubmit, history: cmdHistory }, ref) => {
+  ({ onSubmit, onInputSubmit, history: cmdHistory, shellState }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EditorView | null>(null);
     const onSubmitRef = useRef(onSubmit);
+    const onInputSubmitRef = useRef(onInputSubmit);
     const historyRef = useRef(cmdHistory);
     const historyIndexRef = useRef(-1);
+    const shellStateRef = useRef(shellState);
+    const passwordRef = useRef<HTMLInputElement>(null);
+    const [passwordValue, setPasswordValue] = useState("");
 
     onSubmitRef.current = onSubmit;
+    onInputSubmitRef.current = onInputSubmit;
     historyRef.current = cmdHistory;
+    shellStateRef.current = shellState;
+
+    const isInputExpected = shellState.type === "InputExpected";
+    const isPasswordMode =
+      isInputExpected && !(shellState as Extract<PtyState, { type: "InputExpected" }>).echo_enabled;
+    const isRawMode = shellState.type === "RawMode";
 
     const submitCommand = useCallback((view: EditorView) => {
       const text = view.state.doc.toString().trim();
-      onSubmitRef.current(text);
+      const currentState = shellStateRef.current;
+
+      if (currentState.type === "InputExpected") {
+        onInputSubmitRef.current(text);
+      } else {
+        onSubmitRef.current(text);
+      }
+
       if (view.state.doc.length > 0) {
         view.dispatch({
           changes: { from: 0, to: view.state.doc.length, insert: "" },
@@ -123,10 +145,19 @@ const CommandEditor = forwardRef<CommandEditorHandle, Props>(
 
     useImperativeHandle(ref, () => ({
       submit: () => {
-        if (viewRef.current) submitCommand(viewRef.current);
+        if (isPasswordMode) {
+          onInputSubmitRef.current(passwordValue);
+          setPasswordValue("");
+        } else if (viewRef.current) {
+          submitCommand(viewRef.current);
+        }
       },
       focus: () => {
-        viewRef.current?.focus();
+        if (isPasswordMode) {
+          passwordRef.current?.focus();
+        } else {
+          viewRef.current?.focus();
+        }
       },
     }));
 
@@ -137,6 +168,15 @@ const CommandEditor = forwardRef<CommandEditorHandle, Props>(
         {
           key: "Mod-Enter",
           run: (view) => submitCommand(view),
+        },
+        {
+          key: "Enter",
+          run: (view) => {
+            if (shellStateRef.current.type === "InputExpected") {
+              return submitCommand(view);
+            }
+            return false;
+          },
         },
         {
           key: "ArrowUp",
@@ -187,6 +227,45 @@ const CommandEditor = forwardRef<CommandEditorHandle, Props>(
         view.destroy();
       };
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const handlePasswordSubmit = useCallback(
+      (e: React.KeyboardEvent) => {
+        if (e.key === "Enter") {
+          onInputSubmitRef.current(passwordValue);
+          setPasswordValue("");
+        }
+      },
+      [passwordValue]
+    );
+
+    if (isRawMode) {
+      const state = shellState as Extract<PtyState, { type: "RawMode" }>;
+      return (
+        <div className="raw-mode-bar">
+          <span className="raw-mode-label">{state.process_name} running</span>
+          <span className="raw-mode-hint">Focus terminal above for keyboard input</span>
+        </div>
+      );
+    }
+
+    if (isPasswordMode) {
+      const state = shellState as Extract<PtyState, { type: "InputExpected" }>;
+      return (
+        <div className="password-input-container">
+          {state.hint && <span className="input-hint">{state.hint}</span>}
+          <input
+            ref={passwordRef}
+            type="password"
+            className="password-input"
+            value={passwordValue}
+            onChange={(e) => setPasswordValue(e.target.value)}
+            onKeyDown={handlePasswordSubmit}
+            placeholder="Enter password..."
+            autoFocus
+          />
+        </div>
+      );
+    }
 
     return <div ref={containerRef} className="command-editor-container" />;
   }

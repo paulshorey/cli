@@ -112,6 +112,76 @@ body {
   opacity: 0.7;
 }
 
+.submit-btn-input {
+  background: var(--yellow);
+}
+
+/* ---------- Raw mode bar ---------- */
+
+.editor-pane-raw {
+  padding: 2px 8px;
+  background-color: var(--surface);
+}
+
+.raw-mode-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  padding: 4px 0;
+}
+
+.raw-mode-label {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.raw-mode-hint {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+/* ---------- Input expected / password ---------- */
+
+.password-input-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.input-hint {
+  color: var(--yellow);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 300px;
+  flex-shrink: 0;
+}
+
+.password-input {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 8px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.password-input:focus {
+  border-color: var(--accent);
+}
+
+.password-input::placeholder {
+  color: var(--text-dim);
+}
+
 /* ---------- Status bar ---------- */
 
 .status-bar {
@@ -166,6 +236,18 @@ body {
 
 .status-exited {
   color: var(--red);
+}
+
+.status-input {
+  color: var(--yellow);
+}
+
+.status-editor {
+  color: var(--accent);
+}
+
+.status-raw {
+  color: var(--accent);
 }
 
 .status-exit {

@@ -12,7 +12,6 @@ pub enum OscEvent {
 }
 
 /// Items emitted by the pipeline, interleaved in the order they appear in the stream.
-/// This preserves correct ordering so the frontend can inject separators at the right spot.
 pub enum PipelineItem {
     Output(Vec<u8>),
     Event(OscEvent),
@@ -28,10 +27,14 @@ enum ScanState {
 /// Scans the raw PTY byte stream for OSC 133 (shell integration) and OSC 7 (CWD) sequences.
 /// Strips matched sequences from the output and returns them as structured events,
 /// interleaved with the clean output bytes in the correct order.
+///
+/// Also tracks the last line of visible output for use as input prompt hints.
 pub struct OutputPipeline {
     scan_state: ScanState,
     osc_buf: Vec<u8>,
     output_buf: Vec<u8>,
+    current_line_buf: Vec<u8>,
+    last_complete_line: String,
 }
 
 impl OutputPipeline {
@@ -40,6 +43,18 @@ impl OutputPipeline {
             scan_state: ScanState::Normal,
             osc_buf: Vec::with_capacity(256),
             output_buf: Vec::with_capacity(4096),
+            current_line_buf: Vec::with_capacity(256),
+            last_complete_line: String::new(),
+        }
+    }
+
+    /// Returns the last line of visible output (current incomplete line, or last complete line).
+    /// Used as the hint text for InputExpected state.
+    pub fn last_line(&self) -> String {
+        if !self.current_line_buf.is_empty() {
+            String::from_utf8_lossy(&self.current_line_buf).trim().to_string()
+        } else {
+            self.last_complete_line.clone()
         }
     }
 
@@ -55,6 +70,7 @@ impl OutputPipeline {
                         self.scan_state = ScanState::AfterEsc;
                     } else {
                         self.output_buf.push(byte);
+                        self.track_line(byte);
                     }
                 }
                 ScanState::AfterEsc => {
@@ -62,7 +78,6 @@ impl OutputPipeline {
                         self.scan_state = ScanState::InOsc;
                         self.osc_buf.clear();
                     } else {
-                        // Not an OSC -- emit the ESC and this byte as normal output
                         self.output_buf.push(0x1b);
                         self.output_buf.push(byte);
                         self.scan_state = ScanState::Normal;
@@ -70,7 +85,6 @@ impl OutputPipeline {
                 }
                 ScanState::InOsc => {
                     if byte == 0x07 {
-                        // BEL terminator -- OSC sequence complete
                         self.finish_osc(&mut items);
                         self.scan_state = ScanState::Normal;
                     } else if byte == 0x1b {
@@ -81,11 +95,9 @@ impl OutputPipeline {
                 }
                 ScanState::InOscEscEnd => {
                     if byte == b'\\' {
-                        // ST terminator (ESC \) -- OSC sequence complete
                         self.finish_osc(&mut items);
                         self.scan_state = ScanState::Normal;
                     } else {
-                        // Not a terminator, treat as OSC content
                         self.osc_buf.push(0x1b);
                         self.osc_buf.push(byte);
                         self.scan_state = ScanState::InOsc;
@@ -94,7 +106,6 @@ impl OutputPipeline {
             }
         }
 
-        // Flush any remaining output
         if !self.output_buf.is_empty() {
             items.push(PipelineItem::Output(std::mem::take(&mut self.output_buf)));
         }
@@ -102,18 +113,27 @@ impl OutputPipeline {
         items
     }
 
-    /// Handles a completed OSC sequence. If it's one of our markers (133 or 7),
-    /// flushes pending output first, then emits the event. Otherwise reconstructs
-    /// the OSC and appends to output.
+    fn track_line(&mut self, byte: u8) {
+        if byte == b'\n' {
+            if !self.current_line_buf.is_empty() {
+                self.last_complete_line =
+                    String::from_utf8_lossy(&self.current_line_buf).trim().to_string();
+                self.current_line_buf.clear();
+            }
+        } else if byte == b'\r' {
+            // Carriage return: reset current line (handles \r\n and \r overwrites)
+        } else {
+            self.current_line_buf.push(byte);
+        }
+    }
+
     fn finish_osc(&mut self, items: &mut Vec<PipelineItem>) {
         if let Some(event) = self.try_parse_marker() {
-            // Flush output accumulated before this marker
             if !self.output_buf.is_empty() {
                 items.push(PipelineItem::Output(std::mem::take(&mut self.output_buf)));
             }
             items.push(PipelineItem::Event(event));
         } else {
-            // Not our marker -- reconstruct the OSC and forward as output
             self.output_buf.push(0x1b);
             self.output_buf.push(b']');
             self.output_buf.extend_from_slice(&self.osc_buf);
@@ -142,7 +162,6 @@ impl OutputPipeline {
                 _ => None,
             }
         } else if buf.starts_with(b"7;") {
-            // OSC 7: "7;file://hostname/path/to/dir"
             let s = std::str::from_utf8(&buf[2..]).ok()?;
             let path_start = s
                 .find("//")
