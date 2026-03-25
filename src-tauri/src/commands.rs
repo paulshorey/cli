@@ -1,8 +1,8 @@
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{Emitter, State};
 
 use crate::pty::session::PtySession;
-use crate::pty::state_machine::PtyStateMachine;
+use crate::pty::state_machine::{Emission, PtyStateMachine};
 
 pub struct AppState {
     pub pty_session: Mutex<PtySession>,
@@ -10,10 +10,20 @@ pub struct AppState {
 }
 
 #[tauri::command]
-pub fn send_command(state: State<'_, AppState>, command: String) -> Result<(), String> {
-    {
+pub fn send_command(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    command: String,
+) -> Result<(), String> {
+    let emissions = {
         let mut sm = state.state_machine.lock().map_err(|e| e.to_string())?;
-        sm.transition_to_running(command.clone());
+        sm.on_command_sent(&command)
+    };
+
+    for emission in &emissions {
+        if let Emission::StateChanged(s) = emission {
+            let _ = app.emit("pty:state_changed", s);
+        }
     }
 
     let session = state.pty_session.lock().map_err(|e| e.to_string())?;

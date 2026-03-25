@@ -132,12 +132,28 @@ body {
   opacity: 0.3;
 }
 
+.status-cwd {
+  color: var(--text-dim);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .status-shell {
   color: var(--text-dim);
 }
 
 .status-state {
   font-weight: 500;
+  max-width: 250px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-spacer {
+  flex: 1;
 }
 
 .status-ready {
@@ -149,5 +165,17 @@ body {
 }
 
 .status-exited {
+  color: var(--red);
+}
+
+.status-exit {
+  font-weight: 500;
+}
+
+.status-exit-ok {
+  color: var(--green);
+}
+
+.status-exit-err {
   color: var(--red);
 }

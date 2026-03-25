@@ -1,9 +1,11 @@
 mod commands;
 mod pty;
+mod shell;
 
 use commands::AppState;
+use pty::output_pipeline::{OutputPipeline, PipelineItem};
 use pty::session::PtySession;
-use pty::state_machine::PtyStateMachine;
+use pty::state_machine::{Emission, PtyState, PtyStateMachine};
 use std::io::Read;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
@@ -21,8 +23,7 @@ pub fn run() {
                 state_machine: Mutex::new(PtyStateMachine::new()),
             });
 
-            let handle = app.handle().clone();
-            start_pty_reader(handle, reader);
+            start_output_thread(app.handle().clone(), reader);
 
             Ok(())
         })
@@ -35,27 +36,73 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-/// Spawns a background thread that reads from the PTY output stream
-/// and emits each chunk to the frontend as a "pty:output" event.
-fn start_pty_reader(handle: tauri::AppHandle, mut reader: pty::session::PtyReader) {
+/// Background thread: reads raw PTY output, passes through the OutputPipeline
+/// to extract OSC markers, feeds the state machine, and emits typed events.
+fn start_output_thread(handle: tauri::AppHandle, mut reader: pty::session::PtyReader) {
     std::thread::spawn(move || {
+        let mut pipeline = OutputPipeline::new();
         let mut buf = [0u8; 4096];
+
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => {
-                    let _ = handle.emit("pty:exit", 0);
+                    let app_state: tauri::State<AppState> = handle.state();
+                    let emissions = {
+                        let mut sm = app_state.state_machine.lock().unwrap();
+                        sm.on_exit(0)
+                    };
+                    emit_all(&handle, &emissions);
                     break;
                 }
                 Ok(n) => {
-                    let text = String::from_utf8_lossy(&buf[..n]).to_string();
-                    let _ = handle.emit("pty:output", &text);
+                    let items = pipeline.process(&buf[..n]);
+                    for item in items {
+                        match item {
+                            PipelineItem::Output(bytes) => {
+                                let text = String::from_utf8_lossy(&bytes).to_string();
+                                let _ = handle.emit("pty:output", &text);
+                            }
+                            PipelineItem::Event(osc_event) => {
+                                let app_state: tauri::State<AppState> = handle.state();
+                                let emissions = {
+                                    let mut sm = app_state.state_machine.lock().unwrap();
+                                    sm.on_osc_event(osc_event)
+                                };
+                                emit_all(&handle, &emissions);
+                            }
+                        }
+                    }
                 }
                 Err(e) => {
                     eprintln!("PTY read error: {}", e);
-                    let _ = handle.emit("pty:exit", 1);
+                    let app_state: tauri::State<AppState> = handle.state();
+                    let emissions = {
+                        let mut sm = app_state.state_machine.lock().unwrap();
+                        sm.on_exit(1)
+                    };
+                    emit_all(&handle, &emissions);
                     break;
                 }
             }
         }
     });
+}
+
+fn emit_all(handle: &tauri::AppHandle, emissions: &[Emission]) {
+    for emission in emissions {
+        match emission {
+            Emission::StateChanged(state) => {
+                let _ = handle.emit("pty:state_changed", state);
+                if let PtyState::Exited { exit_code } = state {
+                    let _ = handle.emit("pty:exit", exit_code);
+                }
+            }
+            Emission::CommandDone(payload) => {
+                let _ = handle.emit("pty:command_done", payload);
+            }
+            Emission::CwdChanged(payload) => {
+                let _ = handle.emit("pty:cwd_changed", payload);
+            }
+        }
+    }
 }

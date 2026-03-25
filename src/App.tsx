@@ -1,25 +1,30 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import TerminalView from "./components/TerminalView";
-import CommandEditor from "./components/CommandEditor";
+import CommandEditor, {
+  type CommandEditorHandle,
+} from "./components/CommandEditor";
 import StatusBar from "./components/StatusBar";
+import { useTranscript } from "./hooks/useTranscript";
 import "./App.css";
-
-type ShellState = "ready" | "running" | "exited";
 
 function App() {
   const [history, setHistory] = useState<string[]>([]);
-  const [shellState, setShellState] = useState<ShellState>("ready");
+  const editorRef = useRef<CommandEditorHandle>(null);
+  const { entries, cwd, shellState } = useTranscript();
+
+  const lastEntry = entries.length > 0 ? entries[entries.length - 1] : null;
 
   const handleSubmit = useCallback(async (command: string) => {
     try {
-      setShellState("running");
-      await invoke("send_command", { command });
-      setHistory((prev) => [...prev, command]);
-      setTimeout(() => setShellState("ready"), 500);
+      if (command) {
+        await invoke("send_command", { command });
+        setHistory((prev) => [...prev, command]);
+      } else {
+        await invoke("send_input", { input: "\r" });
+      }
     } catch (err) {
       console.error("Failed to send command:", err);
-      setShellState("ready");
     }
   }, []);
 
@@ -29,23 +34,21 @@ function App() {
         <TerminalView />
       </div>
       <div className="editor-pane">
-        <span className="prompt-symbol">❯</span>
-        <CommandEditor onSubmit={handleSubmit} history={history} />
+        <span className="prompt-symbol">&rsaquo;</span>
+        <CommandEditor
+          ref={editorRef}
+          onSubmit={handleSubmit}
+          history={history}
+        />
         <button
           className="submit-btn"
-          onClick={() => {
-            const cm = document.querySelector(".cm-content") as HTMLElement;
-            if (cm) {
-              const text = cm.textContent?.trim();
-              if (text) handleSubmit(text);
-            }
-          }}
+          onClick={() => editorRef.current?.submit()}
           title="Run (Cmd+Enter)"
         >
           Run
         </button>
       </div>
-      <StatusBar state={shellState} />
+      <StatusBar shellState={shellState} cwd={cwd} lastEntry={lastEntry} />
     </div>
   );
 }

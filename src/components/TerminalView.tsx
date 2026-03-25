@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { CommandDonePayload } from "../types/pty";
 import "@xterm/xterm/css/xterm.css";
 
 const THEME = {
@@ -33,7 +34,6 @@ const THEME = {
 export default function TerminalView() {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -54,13 +54,13 @@ export default function TerminalView() {
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(containerRef.current);
-
     terminalRef.current = terminal;
-    fitAddonRef.current = fitAddon;
 
     requestAnimationFrame(() => {
       fitAddon.fit();
-      syncSize(terminal);
+      invoke("resize_pty", { cols: terminal.cols, rows: terminal.rows }).catch(
+        console.error
+      );
     });
 
     terminal.onResize(({ cols, rows }) => {
@@ -68,9 +68,7 @@ export default function TerminalView() {
     });
 
     const resizeObserver = new ResizeObserver(() => {
-      requestAnimationFrame(() => {
-        fitAddon.fit();
-      });
+      requestAnimationFrame(() => fitAddon.fit());
     });
     resizeObserver.observe(containerRef.current);
 
@@ -84,20 +82,27 @@ export default function TerminalView() {
       );
     });
 
+    const unlistenDone = listen<CommandDonePayload>(
+      "pty:command_done",
+      (event) => {
+        const code = event.payload.exit_code;
+        const color = code === 0 ? "32" : "31";
+        const label = code === 0 ? "ok" : `exit ${code}`;
+        const bar = "\u2500".repeat(Math.max(0, terminal.cols - label.length - 6));
+        terminal.write(
+          `\x1b[90m\u2500\u2500 \x1b[${color}m${label}\x1b[90m \u2500${bar}\x1b[0m\r\n`
+        );
+      }
+    );
+
     return () => {
       unlistenOutput.then((fn) => fn());
       unlistenExit.then((fn) => fn());
+      unlistenDone.then((fn) => fn());
       resizeObserver.disconnect();
       terminal.dispose();
     };
   }, []);
 
   return <div ref={containerRef} className="terminal-view" />;
-}
-
-function syncSize(terminal: Terminal) {
-  invoke("resize_pty", {
-    cols: terminal.cols,
-    rows: terminal.rows,
-  }).catch(console.error);
 }
