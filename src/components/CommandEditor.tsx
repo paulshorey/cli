@@ -26,6 +26,7 @@ interface Props {
 export interface CommandEditorHandle {
   submit: () => void;
   focus: () => void;
+  mirrorKeystroke: (data: string) => void;
 }
 
 const editorTheme = EditorView.theme({
@@ -88,13 +89,12 @@ const CommandEditor = forwardRef<CommandEditorHandle, Props>(
     const isInputExpected = shellState.type === "InputExpected";
     const isPasswordMode =
       isInputExpected && !(shellState as Extract<PtyState, { type: "InputExpected" }>).echo_enabled;
-    const isRawMode = shellState.type === "RawMode";
 
     const submitCommand = useCallback((view: EditorView) => {
       const text = view.state.doc.toString().trim();
       const currentState = shellStateRef.current;
 
-      if (currentState.type === "InputExpected") {
+      if (currentState.type === "InputExpected" || currentState.type === "RawMode") {
         onInputSubmitRef.current(text);
       } else {
         onSubmitRef.current(text);
@@ -159,6 +159,30 @@ const CommandEditor = forwardRef<CommandEditorHandle, Props>(
           viewRef.current?.focus();
         }
       },
+      mirrorKeystroke: (data: string) => {
+        const view = viewRef.current;
+        if (!view) return;
+
+        if (data === "\r" || data === "\n") {
+          if (view.state.doc.length > 0) {
+            view.dispatch({
+              changes: { from: 0, to: view.state.doc.length, insert: "" },
+            });
+          }
+        } else if (data === "\x7f" || data === "\b") {
+          const len = view.state.doc.length;
+          if (len > 0) {
+            view.dispatch({
+              changes: { from: len - 1, to: len, insert: "" },
+            });
+          }
+        } else if (data.length === 1 && data.charCodeAt(0) >= 32) {
+          const len = view.state.doc.length;
+          view.dispatch({
+            changes: { from: len, to: len, insert: data },
+          });
+        }
+      },
     }));
 
     useEffect(() => {
@@ -172,7 +196,8 @@ const CommandEditor = forwardRef<CommandEditorHandle, Props>(
         {
           key: "Enter",
           run: (view) => {
-            if (shellStateRef.current.type === "InputExpected") {
+            const st = shellStateRef.current;
+            if (st.type === "InputExpected" || st.type === "RawMode") {
               return submitCommand(view);
             }
             return false;
@@ -237,16 +262,6 @@ const CommandEditor = forwardRef<CommandEditorHandle, Props>(
       },
       [passwordValue]
     );
-
-    if (isRawMode) {
-      const state = shellState as Extract<PtyState, { type: "RawMode" }>;
-      return (
-        <div className="raw-mode-bar">
-          <span className="raw-mode-label">{state.process_name} running</span>
-          <span className="raw-mode-hint">Focus terminal above for keyboard input</span>
-        </div>
-      );
-    }
 
     if (isPasswordMode) {
       const state = shellState as Extract<PtyState, { type: "InputExpected" }>;

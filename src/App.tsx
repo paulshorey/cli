@@ -15,6 +15,8 @@ function App() {
 
   const lastEntry = entries.length > 0 ? entries[entries.length - 1] : null;
   const isRawMode = shellState.type === "RawMode";
+  const isInteractive =
+    shellState.type === "InputExpected" || shellState.type === "RawMode";
 
   const handleSubmit = useCallback(async (command: string) => {
     try {
@@ -31,10 +33,14 @@ function App() {
 
   const handleInputSubmit = useCallback(async (text: string) => {
     try {
-      await invoke("send_input", { input: text + "\n" });
+      await invoke("send_input", { input: text + "\r" });
     } catch (err) {
       console.error("Failed to send input:", err);
     }
+  }, []);
+
+  const handleRawKeystroke = useCallback((data: string) => {
+    editorRef.current?.mirrorKeystroke(data);
   }, []);
 
   // Global Ctrl+C handler
@@ -60,10 +66,13 @@ function App() {
   return (
     <div className="app">
       <div className="terminal-pane">
-        <TerminalView rawMode={isRawMode} />
+        <TerminalView
+          rawMode={isRawMode}
+          onRawKeystroke={handleRawKeystroke}
+        />
       </div>
-      <div className={`editor-pane ${isRawMode ? "editor-pane-raw" : ""}`}>
-        {!isRawMode && <span className="prompt-symbol">&rsaquo;</span>}
+      <div className="editor-pane">
+        <span className="prompt-symbol">&rsaquo;</span>
         <CommandEditor
           ref={editorRef}
           onSubmit={handleSubmit}
@@ -71,7 +80,7 @@ function App() {
           history={history}
           shellState={shellState}
         />
-        {!isRawMode && shellState.type !== "InputExpected" && (
+        {!isInteractive && (
           <button
             className="submit-btn"
             onClick={() => editorRef.current?.submit()}
@@ -80,7 +89,7 @@ function App() {
             Run
           </button>
         )}
-        {shellState.type === "InputExpected" && (
+        {isInteractive && (
           <button
             className="submit-btn submit-btn-input"
             onClick={() => editorRef.current?.submit()}

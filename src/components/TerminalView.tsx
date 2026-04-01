@@ -33,12 +33,15 @@ const THEME = {
 
 interface Props {
   rawMode?: boolean;
+  onRawKeystroke?: (data: string) => void;
 }
 
-export default function TerminalView({ rawMode = false }: Props) {
+export default function TerminalView({ rawMode = false, onRawKeystroke }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const dataListenerRef = useRef<{ dispose: () => void } | null>(null);
+  const onRawKeystrokeRef = useRef(onRawKeystroke);
+  onRawKeystrokeRef.current = onRawKeystroke;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -109,7 +112,6 @@ export default function TerminalView({ rawMode = false }: Props) {
     };
   }, []);
 
-  // Toggle stdin and keyboard forwarding based on rawMode
   useEffect(() => {
     const terminal = terminalRef.current;
     if (!terminal) return;
@@ -117,10 +119,10 @@ export default function TerminalView({ rawMode = false }: Props) {
     if (rawMode) {
       terminal.options.disableStdin = false;
       terminal.options.cursorBlink = true;
-      terminal.focus();
 
       const listener = terminal.onData((data: string) => {
         invoke("send_input", { input: data }).catch(console.error);
+        onRawKeystrokeRef.current?.(data);
       });
       dataListenerRef.current = listener;
     } else {
